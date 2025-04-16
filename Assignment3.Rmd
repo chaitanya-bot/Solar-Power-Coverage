@@ -1,0 +1,205 @@
+---
+title: "SML_Assignment3"
+author: "Chaitanya Ashok Malagikar 22201398"
+date: '2023-04-22'
+output: pdf_document
+---
+
+```{r,warning=FALSE,message=FALSE}
+# Loading the dataset and packages
+load("data_hw3_deepsolar.RData")
+library(dplyr)
+library(randomForest)
+library(e1071)
+library(rpart)
+library(kernlab)
+```
+
+## 1.
+
+```{r}
+#Scaling all the numeric columns in the dataset
+data <- data%>%mutate_if(is.numeric,scale)
+set.seed(10) #Setting seed for reproducibility
+N = nrow(data) #Number of rows of dataset
+set_of_random_no <- sample(1:N,0.15*N) #Generating random numbers(15% of dataset)
+
+#Generating the test set and train-val set
+test_set <- as.data.frame(data[set_of_random_no,])
+train_val_set<- as.data.frame(data[-set_of_random_no,])
+x <- train_val_set[,-1]  #Dataset of predictor variables
+y <- train_val_set[,1]   #Target variable
+N1 <- nrow(x)    #Number of rows in train-val set
+
+#Function to calculate specificity
+class_spec <- function(y, yhat) {
+  tab <- table(y, yhat)
+  return(tab[1,1]/sum(tab[1,]))
+}
+```
+
+The data has been standardized and a seed has been set for reproducibility. class_spec is a function that is used to calculate specificity. The 3 supervised learning methods used to fit this dataset are Support Vector Machines(SVM),Random forests and Classification trees.
+
+### Support Vector Machines(SVM)
+
+```{r}
+#Degree of the polynomial kernel
+degree <- c(1,2,3,4)
+#Cost parameter
+cost <- c(0.1,1, 2, 5, 10, 20)
+grid <- expand.grid(degree, cost)
+colnames(grid) <- c("degree", "cost")
+
+n_mod <- nrow(grid)
+
+#Number of repetitions
+R = 5
+
+spec <- matrix(NA, R, n_mod) # Storing the specificity we get from each iteration
+
+for ( r in 1:R ) {
+  #Creating random numbers. 80% of the data will be training and the rest will be validation
+  train <- sample(1:N1, 0.8*N1)
+  val <- sample(setdiff(1:N1, train))
+  
+  #For loop of each combination of cost and degree
+  for ( j in 1:n_mod ) {
+      #Fitting the model
+      fit <- ksvm(as.matrix(x[train,]), y[train], type = "C-svc",
+                  kernel = "polydot",
+                  C = grid$cost[j], kpar = list(degree = grid$degree[j]))
+      #Predicting the validation set
+      pred <- predict(fit, newdata = x[val,])
+      #Storing specificity
+      spec[r,j] <- class_spec(pred, y[val])
+  }
+}
+```
+
+ksvm function is used to fit the model using svm. The kernel that has been used here is polydot. It is a polynomial kernel. The type is c-svc which stands for stands for C-support vector classification.It is an algorithm that will try to find the optimal hyperplane that separates the classes in the data. 
+
+The 2 hyperparameters selected to tune the model is degree and C. degree controls the degree of the polynomial function that will be used for the kernel. It specifies the order of the polynomial. C is the cost function which is used to control the trade off between achieving a low train or test error.  
+
+The number of repetitions is kept at 5. It should ideally be more but due to high computation time. It has been kept at 5. Number of repetitions will be 5 for Random forest and Classification trees also.  
+
+80% of the train-val set will be used to train the dataset and the rest of it will be used for validation. It will be the same for Random forest and Classification trees.
+
+### Random Forests
+
+```{r}
+#grid contains mtry hyperparameter
+grid1 <- expand.grid( mtry = c(2, 4, 6, 8, 10, 12, 14))
+n_mod <- nrow(grid1)
+
+spec1 <- matrix(NA, R, n_mod) # Storing the specificity we get from each iteration
+
+for ( r in 1:R ) {
+  #Creating random numbers. 80% of the data will be training and the rest will be validation
+  train <- sample(1:N1, 0.8*N1)
+  val <- sample(setdiff(1:N1, train))
+  #For loop to fit random forest with each mtry listed
+  for ( j in 1:n_mod ) {
+      #Fitting the model
+      fit <- randomForest(solar_system_coverage ~ ., data = train_val_set, 
+                          subset = train,mtry=grid1$mtry[j])
+      #Predicting the validation set
+      pred <- predict(fit, newdata = train_val_set[val,], type = "class")
+      #Storing specificity
+      spec1[r,j] <- class_spec(pred, y[val])
+  }
+}
+
+```
+
+randomForest is the function that has been used to fit the model using random forests. The hyperparameter used to tune the model is mtry. This is the hyperparameter that controls the number of variables that are randomly sampled at each split of the decision trees. It is given from 2 to 14. The last is given as 14 because the number of predictor variables that are present in this dataset is 14.
+
+### Classification trees
+
+```{r}
+#grid contains cp hyperparameter
+grid2 <- expand.grid( cp = c(0.001,0.002,0.005,0.01,0.02,0.05))
+n_mod <- nrow(grid2)
+
+spec2 <- matrix(NA, R, n_mod) # Storing the specificity we get from each iteration
+
+for ( r in 1:R ) {
+  #Creating random numbers. 80% of the data will be training and the rest will be validation
+  train <- sample(1:N1, 0.8*N1)
+  val <- sample(setdiff(1:N1, train))
+   #For loop to fit classification tree with each cp listed
+  for ( j in 1:n_mod ) {
+    #Fitting the model
+    fit <- rpart(solar_system_coverage ~ ., data = train_val_set, 
+                        subset = train,cp=grid2$cp[j])
+    #Predicting the validation set
+    pred <- predict(fit, newdata = train_val_set[val,], type = "class")
+    #Storing specificity
+    spec2[r,j] <- class_spec(pred, y[val])
+  }
+}
+```
+
+rpart is the function that has been used to fit the model using classification trees. The hyperparameter used to tune the model is cp. This is the hyperparameter that controls the complexity of the tree. The default value is 0.01. The lower the value, the complexity increases. So in the grid, both values lower and higher than 0.01 is given.
+
+## 2.
+
+We want to know how accurately the model predicts if a tile has high solar power. high is considered as 0 in this model.Specificity measures the proportion of actual negative cases that are correctly identified by the model as negative. So that is the metric that will be used to select the best model
+
+```{r}
+avg_spec <- colMeans(spec) # estimated mean specificity
+grid_spec <- cbind(grid, avg_spec) 
+grid_spec
+
+best <- which.max(grid_spec$avg_spec) #Hyperparameters for which we get best specificity
+grid_spec[best,]
+```
+
+The probability of guessing if the tile has high solar power is highest when hyperparameters degree and cost are set to 2 and 0.1 respectively.
+
+```{r}
+avg_spec1 <- colMeans(spec1) # estimated mean specificity
+grid_spec1 <- cbind(grid1, avg_spec1)
+grid_spec1
+
+best <- which.max(grid_spec1$avg_spec1) #mtry value for which we get best specificity
+grid_spec1[best,]
+```
+
+The probability of guessing if the tile has high solar power is highest when mtry hyperparameter is set at 2.
+
+```{r}
+avg_spec2 <- colMeans(spec2) # estimated mean specificity
+grid_spec2 <- cbind(grid2, avg_spec2)
+grid_spec2
+
+best <- which.max(grid_spec2$avg_spec2) #cp value for which we get best specificity
+grid_spec2[best,]
+```
+
+The probability of guessing if the tile has high solar power is highest when cp hyperparameter is set at 0.02.
+
+## 3.
+
+```{r}
+#Fitting the model with both training and validation set with mtry value = 2 
+#for which we got the best specificity
+fit <- randomForest(solar_system_coverage ~ ., data = train_val_set, mtry=2)
+#Predicting the test dataset
+pred <- predict(fit, newdata = test_set, type = "class")
+table <- table(pred,test_set$solar_system_coverage)
+table
+
+#Calculating and displaying accuracy,sensitivity and specificity
+accuracy <- sum(diag(table))/sum(table)
+sensitivity <- table[2,2]/sum(table[2,]) 
+specificity <- table[1,1]/sum(table[1,]) 
+
+accuracy
+sensitivity
+specificity
+```
+
+We are fitting the model with the mtry = 2 and random forest as the supervised learning method
+which was selected as the best model. to fit the model, we are using the entire train-val set and predicting the test dataset which was created before.  
+
+This model has an accuracy of 95% . Its ability to detect if a tile has low solar power is given by the sensitivity metric which is around 95%. Its ability to detect if a tile has high solar power is given by the specificity metric which is around 87%. So overall we can say that this is a very good model for predicting the target variable.
